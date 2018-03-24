@@ -29,6 +29,8 @@ block body
 						option(value="bitbucket", selected=kind == "bitbucket") Bitbucket project
 					- if (supportsRepositoryKind("gitlab"))
 						option(value="gitlab", selected=kind == "gitlab") GitLab project
+					- if (supportsRepositoryKind("gogs"))
+						option(value="gogs", selected=kind == "gogs") Gogs project
 			p
 				label(for="owner") Repository owner
 				input(type="text", name="owner", value=owner)

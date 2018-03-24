@@ -10,6 +10,7 @@ import dubregistry.mirror;
 import dubregistry.repositories.bitbucket;
 import dubregistry.repositories.github;
 import dubregistry.repositories.gitlab;
+import dubregistry.repositories.gogs;
 import dubregistry.registry;
 import dubregistry.web;
 import dubregistry.api;
@@ -73,10 +74,13 @@ shared static this()
 	auto ghpassword = regsettingsjson["github-password"].opt!string;
 	auto glurl = regsettingsjson["gitlab-url"].opt!string;
 	auto glauth = regsettingsjson["gitlab-auth"].opt!string;
+	auto gogsurl = regsettingsjson["gogs-url"].opt!string;
+	auto gogsauth = regsettingsjson["gogs-auth"].opt!string;
 
 	GithubRepository.register(ghuser, ghpassword);
 	BitbucketRepository.register();
 	if (glurl.length) GitLabRepository.register(glauth, glurl);
+	if (gogsurl.length) GogsRepository.register(gogsauth, gogsurl);
 
 	auto router = new URLRouter;
 	if (s_mirror.length) router.any("*", (req, res) { req.params["mirror"] = s_mirror; });
