@@ -49,7 +49,7 @@ void startMonitoring()
 	s_checkTask = runTask(&monitorPackages);
 }
 
-version (linux) private immutable string certPath;
+private immutable string certPath;
 
 shared static this()
 {
@@ -160,12 +160,14 @@ void main()
 		}
 	}
 
+	bool allowUnauthenticated;
 	string hostname = "code.dlang.org";
 
 	readOption("mirror", &s_mirror, "URL of a package registry that this instance should mirror (WARNING: will overwrite local database!)");
 	readOption("hostname", &hostname, "Domain name of this instance (default: code.dlang.org)");
 	readOption("no-monitoring", &noMonitoring, "Don't periodically monitor for updates (for local development)");
 	readOption("no-serve", &noServe, "Just poll for updates and exit");
+	readOption("allow-unauthenticated", &allowUnauthenticated, "Allow anonymous authentication");
 
 	// validate provided mirror URL
 	if (s_mirror.length)
@@ -186,7 +188,7 @@ void main()
 
 	GithubRepository.register(appConfig.ghauth);
 	BitbucketRepository.register(appConfig.bbuser, appConfig.bbpassword);
-	if (appConfig.glurl.length) GitLabRepository.register(appConfig.glauth, appConfig.glurl);
+	GitLabRepository.register(appConfig.glauth, appConfig.glurl);
 
 	auto router = new URLRouter;
 	if (s_mirror.length) router.any("*", (req, res) { req.params["mirror"] = s_mirror; });
@@ -195,7 +197,7 @@ void main()
 
 	// init mongo
 	import dubregistry.mongodb : databaseName, mongoSettings;
-	mongoSettings();
+	mongoSettings(allowUnauthenticated);
 
 	// VPM registry
 	auto regsettings = new DubRegistrySettings;

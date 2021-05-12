@@ -11,18 +11,21 @@ How to build & run locally
 --------------------------
 
 Requirements:
+
 - OpenSSL
 - MongoDB
-
-```
-dub
-```
 
 Running as a mirror
 -------------------
 
-```
+```bash
 dub -- --mirror=https://code.dlang.org
+```
+
+To access MongoDB **without** authentication:
+
+```bash
+dub -- --allow-unauthenticated=true
 ```
 
 GitHub/GitLab API
@@ -33,18 +36,18 @@ You can do so by creating a `settings.json` in the root folder of the dub-regist
 
 ```json
 {
-	"github-user": "<github-user-name>",
-	"github-password": "<github-personal-access-token from https://github.com/settings/tokens>",
-	"gitlab-url": "https://gitlab.com/",
-	"gitlab-auth": "<gitlab-api-token from https://gitlab.com/profile/personal_access_tokens>",
-	"bitbucket-user": "<your-fancy-user-name>",
-	"bitbucket-password": "<your-fancy-password>"
+ "github-user": "<github-user-name>",
+ "github-password": "<github-personal-access-token from https://github.com/settings/tokens>",
+ "gitlab-url": "https://gitlab.com/",
+ "gitlab-auth": "<gitlab-api-token from https://gitlab.com/profile/personal_access_tokens>",
+ "bitbucket-user": "<your-fancy-user-name>",
+ "bitbucket-password": "<your-fancy-password>"
 }
 ```
 
 It's recommended to create a separate account for the DUB registry GitHub authentication. Equally, if no GitLab packages are used in your local repository, no GitLab authentication is needed.
 
-It's absolutely recommended to create a personal access token without any extra permissions for your GitHub account instead of entering your password plain text into the settings file. You can generate an access token at https://github.com/settings/tokens (Settings -> Developer Settings -> Personal access tokens)
+It's absolutely recommended to create a personal access token without any extra permissions for your GitHub account instead of entering your password plain text into the settings file. You can generate an access token at <https://github.com/settings/tokens> (Settings -> Developer Settings -> Personal access tokens)
 
 ### SECURITY NOTICE
 
@@ -55,7 +58,7 @@ Running without the cron job
 
 For local development it's often useful to disable the cron job, you can do so with the `--no-monitoring` flag:
 
-```
+```bash
 dub -- --no-monitoring
 ```
 
@@ -64,7 +67,7 @@ Importing a one-time snapshot from the registry
 
 You can download a dump of all packages and import it into your local registry for development:
 
-```
+```bash
 curl https://code.dlang.org/api/packages/dump | gunzip > mirror.json
 dub -- --mirror=mirror.json
 ```
@@ -72,7 +75,7 @@ dub -- --mirror=mirror.json
 Starting the registry with `mirror.json` will import all packages within the JSON file.
 Once all packages have been imported, you can start the registry as you normally would:
 
-```
+```bash
 dub
 ```
 
@@ -85,16 +88,16 @@ Deploy your private dub-registry with Docker
 
 The [dlangcommunity/dub-registry](https://hub.docker.com/r/dlangcommunity/dub-registry/) Docker image is available for an easy setup:
 
-```
+```bash
 export DUB_REGISTRY_HOME="$PWD"
 docker run --rm -ti -p 9095:9095 -v $DUB_REGISTRY_HOME:/bitnami -v $DUB_REGISTRY_HOME:/dub dlangcommunity/dub-registry
 ```
 
-This will run both `mongodb` and `dub-registry` while persisting the database in the `$DUB_REGISTRY_HOME` location. The registry is accessible at http://127.0.0.1:9095
+This will run both `mongodb` and `dub-registry` while persisting the database in the `$DUB_REGISTRY_HOME` location. The registry is accessible at <http://127.0.0.1:9095>
 
 To run it as a daemon and make it auto-restart use:
 
-```
+```bash
 docker run -d --restart=always -ti -p 9095:9095 -v $DUB_REGISTRY_HOME:/bitnami -v $DUB_REGISTRY_HOME:/dub dlangcommunity/dub-registry
 ```
 
@@ -103,13 +106,23 @@ The registry can be configured by adding the `settings.json` file in `$DUB_REGIS
 Staging server
 --------------
 
-An auto-deployed version of `master` can be found at https://dub-registry-staging.herokuapp.com.
+An auto-deployed version of `master` can be found at <https://dub-registry-staging.herokuapp.com>.
 
-FAQ: I'm getting an "undefined reference to 'SSLv23_client_method'"
--------------------------------------------------------------------
+Troubleshooting
+---------------
 
-Link with OpenSSL 1.1:
+Q: I'm getting an "undefined reference to SSLv23_client_method"
 
-```
+A: Link with OpenSSL 1.1:
+
+```bash
 dub --override-config="vibe-d:tls/openssl-1.1"
+```
+
+Q: I'm getting "Authentication failed"
+
+A: Try accessing mongodb without authentication
+
+```bash
+dub -- --allow-unauthenticated=true
 ```

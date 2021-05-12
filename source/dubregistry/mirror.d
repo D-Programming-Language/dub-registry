@@ -53,21 +53,28 @@ nothrow {
 	try {
 		DbPackage[] packs;
 		URL url;
-		auto path = NativePath(fileOrUrl);
+
+		const path = NativePath(fileOrUrl);
 
 		string source_text;
 
-		if (path.existsFile) source_text = path.readFileUTF8;
+		if (path.existsFile) {
+			logInfo("Using local file at %s", path);
+			source_text = path.readFileUTF8;
+		}
 		else {
 			url = URL(fileOrUrl);
-			source_text = requestHTTP(url ~ InetPath("api/packages/dump"))
+
+			const uri = url ~ InetPath("api/packages/dump");
+			logInfo("Downloading packages from %s", uri);
+
+			source_text = requestHTTP(uri)
 				.bodyReader
 				.readAllUTF8;
 		}
 
+		logInfo("Download complete. Begin deserializing");
 		packs = source_text.deserializeJson!(DbPackage[]);
-
-		logInfo("Updates for '%s' downloaded.", url);
 
 		bool[BsonObjectID] current_packs;
 		foreach (p; packs) current_packs[p._id] = true;
@@ -88,7 +95,7 @@ nothrow {
 		// then add/update all existing packages
 		foreach (p; packs) {
 			try {
-				logInfo("Updating package '%s'", p.name);
+				logDebug("Updating package '%s'", p.name);
 				registry.addOrSetPackage(p);
 			} catch (Exception e) {
 				logError("Failed to add/update package '%s': %s", p.name, e.msg);

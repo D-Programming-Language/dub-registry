@@ -9,16 +9,17 @@ import dub.semver;
 import std.array;
 import std.algorithm;
 import std.exception;
-//import std.string;
 import std.typecons : tuple;
 import std.uni;
 import vibe.vibe;
 
+/// Package cache used for searching in-memory
+DbPackage[] pkgCache;
 
 class DbController {
 @safe:
 
-	private {
+	private	{
 		MongoCollection m_packages;
 		MongoCollection m_downloads;
 		MongoCollection m_files;
@@ -34,24 +35,26 @@ class DbController {
 		m_downloads = db["downloads"];
 		m_files = db["files"];
 
+		logInfo("Creating package cache");
+		updateCache();
+		
 		//
 		// migrations:
 		//
-
 		version (DubRegistry_EnableLegacyMigrations) {
 			// update package format
-			foreach(p; m_packages.find()){
+			foreach (p; m_packages.find()) {
 				bool any_change = false;
 				if (p["branches"].type == Bson.Type.object) {
 					Bson[] branches;
-					foreach (b; p["branches"].byValue)
-						branches ~= b;
+					foreach (b; p["branches"].byValue) branches ~= b;
 					p["branches"] = branches;
 					any_change = true;
 				}
 				if (p["branches"].type == Bson.Type.array) {
 					auto versions = p["versions"].get!(Bson[]);
-					foreach (b; p["branches"].byValue) versions ~= b;
+					foreach (b; p["branches"].byValue)
+						versions ~= b;
 					p["branches"] = Bson(null);
 					p["versions"] = Bson(versions);
 					any_change = true;
@@ -60,7 +63,7 @@ class DbController {
 			}
 
 			// add updateCounter field for packages that don't have it yet
-			m_packages.update(["updateCounter": ["$exists": false]], ["$set" : ["updateCounter" : 0L]], UpdateFlags.multiUpdate);
+			m_packages.update(["updateCounter": ["$exists": false]], ["$set": ["updateCounter": 0L]], UpdateFlags.multiUpdate);
 		}
 
 		// add default non-@optional stats to packages
@@ -78,9 +81,14 @@ class DbController {
 		m_packages.update(["logoHash": ["$exists": true]], ["$unset": ["logo": 0, "logoHash": 0]], UpdateFlags.multiUpdate);
 
 		// create indices
-		m_packages.ensureIndex([tuple("name", 1)], IndexFlags.Unique);
-		m_packages.ensureIndex([tuple("stats.score", 1)]);
-		m_downloads.ensureIndex([tuple("package", 1), tuple("version", 1)]);
+		IndexOptions options;
+		options.unique = true;
+
+		scope IndexModel[3] models = [
+			IndexModel().add("name", 1).withOptions(options),
+			IndexModel().add("stats.score", 1), IndexModel().add("package", 1)
+		];
+		m_packages.createIndexes(models);
 
 		// drop old text index versions
 		db.runCommand(["dropIndexes": "packages", "index": "packages_full_text_search_index"]);
@@ -107,7 +115,7 @@ class DbController {
 		cmd["createIndexes"] = Bson("packages");
 		cmd["indexes"] = [Bson(fts)];
 		auto res = db.runCommand(cmd);
-		enforce(res["ok"].opt!double == 1.0, "Failed to create search index.\n"~res.toString);
+		enforce(res["ok"].opt!double == 1.0, "Failed to create search index.\n" ~ res.toString);
 
 		version (DubRegistry_RepairVersionOrder) {
 			// sort package versions newest to oldest
@@ -124,12 +132,14 @@ class DbController {
 		if (pack._id == BsonObjectID.init)
 			pack._id = BsonObjectID.generate();
 		m_packages.insert(pack);
+		updateCache();
 	}
 
 	void addOrSetPackage(ref DbPackage pack)
 	{
 		enforce(pack._id != BsonObjectID.init, "Cannot update a packag with no ID.");
 		m_packages.update(["_id": pack._id], pack, UpdateFlags.upsert);
+		updateCache();
 	}
 
 	DbPackage getPackage(string packname)
@@ -146,10 +156,10 @@ class DbController {
 
 	BsonObjectID getPackageID(string packname)
 	{
-		static struct PID { BsonObjectID _id; }
+		static struct PID {	BsonObjectID _id; }
 		auto pid = m_packages.findOne!PID(["name": packname], ["_id": 1]);
 		enforce(!pid.isNull(), "Unknown package name.");
-		return pid._id;
+		return pid.get._id;
 	}
 
 	DbPackage getPackage(BsonObjectID id)
@@ -183,12 +193,13 @@ class DbController {
 	{
 		static struct PO { BsonObjectID owner; }
 		auto p = m_packages.findOne!PO(["name": package_name], ["owner": 1]);
-		return !p.isNull && p.owner == user_id;
+		return !p.isNull && p.get.owner == user_id;
 	}
 
 	void removePackage(string packname, BsonObjectID user)
 	{
 		m_packages.remove(["name": Bson(packname), "owner": Bson(user)]);
+		updateCache();
 	}
 
 	void setPackageErrors(string packname, string[] error...)
@@ -213,9 +224,9 @@ class DbController {
 		if (png.length) {
 			auto id = BsonObjectID.generate();
 			m_files.insert([
-				"_id": Bson(id),
-				"data": Bson(BsonBinData(BsonBinData.Type.generic, png))
-			]);
+					"_id": Bson(id),
+					"data": Bson(BsonBinData(BsonBinData.Type.generic, png))
+					]);
 
 			update = serializeToBson(["$set": ["logo": id]]);
 		} else {
@@ -236,6 +247,12 @@ class DbController {
 		m_packages.update(["name": packname], ["$set": ["documentationURL": documentationURL]]);
 	}
 
+	/// Updates the package cache used when searching
+	void updateCache()
+	{
+		pkgCache = m_packages.find().map!(deserializeBson!DbPackage).array;
+	}
+
 	bdata_t getPackageLogo(string packname, out bdata_t rev)
 	{
 		auto bpack = m_packages.findOne(["name": packname], ["logo": 1]);
@@ -247,7 +264,7 @@ class DbController {
 		auto data = m_files.findOne!DbPackageFile(["_id": id.get]);
 		if (data.isNull()) return null;
 
-		rev = (cast(ubyte[])id.get.get!BsonObjectID).idup;
+		rev = (cast(ubyte[]) id.get.get!BsonObjectID).idup;
 		return data.get.data.rawData;
 	}
 
@@ -266,10 +283,10 @@ class DbController {
 
 			// remove versions with invalid dependency names to avoid the findAndModify below to fail
 			() @trusted {
-				new_versions = new_versions.filter!(
-					v => !v.info["dependencies"].opt!(Json[string]).byKey.canFind!(k => k.canFind("."))
-				).array;
-			} ();
+					new_versions = new_versions.filter!(
+						v => !v.info["dependencies"].opt!(Json[string]).byKey.canFind!(k => k.canFind("."))
+					).array;
+			}();
 
 			//assert((cast(Json)bversions).toString() == (cast(Json)serializeToBson(versions)).toString());
 
@@ -294,7 +311,7 @@ class DbController {
 	void updateVersion(string packname, DbPackageVersion ver)
 	{
 		assert(ver.version_.startsWith("~") || ver.version_.isValidVersion());
-		m_packages.update(["name": packname, "versions.version": ver.version_], ["$set": ["versions.$": ver]]);
+		m_packages.update(["name": packname, "versions.version": ver.version_],	["$set": ["versions.$": ver]]);
 	}
 
 	bool hasVersion(string packname, string ver)
@@ -324,18 +341,10 @@ class DbController {
 		import std.math : round;
 
 		if (!query.strip.length) {
-			return m_packages.find()
-				.sort(["stats.score": 1])
-				.map!(deserializeBson!DbPackage)
-				.array;
+			return pkgCache;
 		}
 
-		auto pkgs = m_packages
-			.find(["$text": ["$search": query]], ["textScore": bson(["$meta": "textScore"])])
-			.sort(["textScore": bson(["$meta": "textScore"])]) // sort to only keep most relevant results
-			.limit(50) // limit irrelevant sort results (fixes #341)
-			.map!(deserializeBson!DbPackage)
-			.array;
+		DbPackage[] pkgs = pkgCache.filter!(p => p.name.canFind(query)).array;
 
 		// normalize textScore to same scale as package score
 		immutable minMaxTS = pkgs.map!(p => p.textScore).fold!(min, max)(0.0f, 0.0f);
@@ -344,9 +353,7 @@ class DbController {
 			pkg.textScore = (pkg.textScore - minMaxTS[0]) * scale + DbPackageStats.minScore;
 
 		// sort found packages by weighted textScore and package score
-		return pkgs
-			.sort!((a, b) => a.stats.score + 2 * a.textScore > b.stats.score + 2 * b.textScore)
-			.release;
+		return pkgs.sort!((a, b) => a.stats.score + 2 * a.textScore > b.stats.score + 2 * b.textScore).release;
 	}
 
 	BsonObjectID addDownload(BsonObjectID pack, string ver, string user_agent)
@@ -366,8 +373,8 @@ class DbController {
 		static struct PS { DbPackageStats stats; }
 		auto pack = m_packages.findOne!PS(["name": Bson(packname)], ["stats": true]);
 		enforce!RecordNotFound(!pack.isNull(), "Unknown package name.");
-		logDebug("getPackageStats(%s) %s", packname, pack.stats);
-		return pack.stats;
+		logDebug("getPackageStats(%s) %s", packname, pack.get.stats);
+		return pack.get.stats;
 	}
 
 	void updatePackageStats(BsonObjectID packId, ref DbPackageStats stats)
@@ -416,7 +423,7 @@ class DbController {
 	{
 		auto aggregate(T, string prefix, string groupBy)()
 		@safe {
-			auto group = ["_id": Bson(groupBy ? "$"~groupBy : null)];
+			auto group = ["_id" : Bson(groupBy ? "$" ~ groupBy : null)];
 			Bson[string] project;
 			foreach (mem; __traits(allMembers, T))
 			{
@@ -426,10 +433,10 @@ class DbController {
 				group[mem~"_mean"] = bson(["$avg": "$"~prefix~"."~mem]);
 				group[mem~"_std"] = bson(["$stdDevPop": "$"~prefix~"."~mem]);
 				project[mem] = bson([
-					"mean": "$"~mem~"_mean",
-					"sum": "$"~mem~"_sum",
-					"std": "$"~mem~"_std"
-				]);
+						"mean": "$" ~ mem ~ "_mean",
+						"sum": "$" ~ mem ~ "_sum",
+						"std": "$" ~ mem ~ "_std"
+						]);
 			}
 			auto res = () @trusted {
 					return m_packages.aggregate(["$group": group], ["$project": project]);
@@ -459,7 +466,7 @@ class DbController {
 
 	private void repairVersionOrder()
 	{
-		foreach( bp; m_packages.find() ){
+		foreach (bp; m_packages.find()) {
 			auto p = deserializeBson!DbPackage(bp);
 			auto newversions = p.versions
 				.filter!(v => v.version_.startsWith("~") || v.version_.isValidVersion)
@@ -530,7 +537,7 @@ struct DbRepository {
 		if (path.empty || path.front.name.empty)
 			throw new Exception("Invalid Repository URL (missing project)");
 
-		if(kind == "gitlab")  // Allow any number of segments, as GitLab's subgroups can be nested
+		if (kind == "gitlab") // Allow any number of segments, as GitLab's subgroups can be nested
 			project = path.map!"a.name".join("/");
 		else
 			project = path.front.name;
@@ -594,13 +601,13 @@ struct DbPackageStats {
 	}
 }
 
-struct DbDownloadStatsT(T=uint) {
+struct DbDownloadStatsT(T = uint) {
 	T total, monthly, weekly, daily;
 }
 
 alias DbDownloadStats = DbDownloadStatsT!uint;
 
-struct DbRepoStatsT(T=uint) {
+struct DbRepoStatsT(T = uint) {
 	T stars, watchers, forks, issues;
 }
 
